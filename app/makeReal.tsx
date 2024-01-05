@@ -1,12 +1,6 @@
 import { Editor, TLShapeId, createShapeId } from '@tldraw/tldraw'
 import { ResponseShape } from './ResponseShape/ResponseShape'
 import { getSelectionAsImageDataUrl } from './lib/getSelectionAsImageDataUrl'
-// import {
-// 	GPT4VCompletionResponse,
-// 	GPT4VMessage,
-// 	MessageContent,
-// 	fetchFromOpenAi,
-// } from './lib/fetchFromOpenAi'
 
 import {
 	OllamaCompletionRequest,

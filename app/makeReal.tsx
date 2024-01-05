@@ -1,12 +1,20 @@
 import { Editor, TLShapeId, createShapeId } from '@tldraw/tldraw'
 import { ResponseShape } from './ResponseShape/ResponseShape'
 import { getSelectionAsImageDataUrl } from './lib/getSelectionAsImageDataUrl'
+// import {
+// 	GPT4VCompletionResponse,
+// 	GPT4VMessage,
+// 	MessageContent,
+// 	fetchFromOpenAi,
+// } from './lib/fetchFromOpenAi'
+
 import {
-	GPT4VCompletionResponse,
-	GPT4VMessage,
-	MessageContent,
-	fetchFromOpenAi,
-} from './lib/fetchFromOpenAi'
+	OllamaCompletionRequest,
+	OllamaCOmpletionResponse,
+	fetchFromOllama
+} from './lib/fetchFromOllama'
+
+const DEBUG = true
 
 // the system prompt explains to gpt-4 what we want it to do and how it should behave.
 const systemPrompt = `You are an expert web developer who specializes in building working website prototypes from low-fidelity wireframes.
@@ -44,31 +52,28 @@ export async function makeReal(editor: Editor) {
 	}
 
 	// first, we build the prompt that we'll send to openai.
-	const prompt = await buildPromptForOpenAi(editor)
+	const prompt = await buildPromptForOllama(editor)
 
 	// then, we create an empty response shape. we'll put the response from openai in here, but for
 	// now it'll just show a spinner so the user knows we're working on it.
 	const responseShapeId = makeEmptyResponseShape(editor)
 
 	try {
-		// If you're using the API key input, we preference the key from there.
-		// It's okay if this is undefined—it will just mean that we'll use the
-		// one in the .env file instead.
-		const apiKeyFromDangerousApiKeyInput = (
-			document.body.querySelector('#openai_key_risky_but_cool') as HTMLInputElement
-		)?.value
-
 		// make a request to openai. `fetchFromOpenAi` is a next.js server action,
 		// so our api key is hidden.
-		const openAiResponse = await fetchFromOpenAi(apiKeyFromDangerousApiKeyInput, {
-			model: 'gpt-4-vision-preview',
-			max_tokens: 4096,
-			temperature: 0,
-			messages: prompt,
-		})
+		const req: OllamaCompletionRequest = {
+			model: 'llava',
+			prompt: prompt,
+			// system: systemPrompt,
+			images: [await getSelectionAsImageDataUrl(editor)]
+		}
+		DEBUG && console.debug(req)
+
+		const res = await fetchFromOllama(req)
+		DEBUG && console.debug(res)
 
 		// populate the response shape with the html we got back from openai.
-		populateResponseShape(editor, responseShapeId, openAiResponse)
+		populateResponseShape(editor, responseShapeId, res)
 	} catch (e) {
 		// if something went wrong, get rid of the unnecessary response shape
 		editor.deleteShape(responseShapeId)
@@ -76,68 +81,30 @@ export async function makeReal(editor: Editor) {
 	}
 }
 
-async function buildPromptForOpenAi(editor: Editor): Promise<GPT4VMessage[]> {
-	// if the user has selected a previous response from gpt-4, include that too. hopefully gpt-4 will
-	// modify it with any other feedback or annotations the user has left.
-	const previousResponseContent = getContentOfPreviousResponse(editor)
-
+async function buildPromptForOllama(editor: Editor): Promise<string> {
+	
 	// get all text within the current selection
 	const referenceText = getSelectionAsText(editor)
-
-	// the user messages describe what the user has done and what they want to do next. they'll get
-	// combined with the system prompt to tell gpt-4 what we'd like it to do.
-	const userMessages: MessageContent = [
-		{
-			type: 'image_url',
-			image_url: {
-				// send an image of the current selection to gpt-4 so it can see what we're working with
-				url: await getSelectionAsImageDataUrl(editor),
-				detail: 'high',
-			},
-		},
-		{
-			type: 'text',
-			text: previousResponseContent
-				? 'Here are the latest wireframes. Could you make a new website based on these wireframes and notes and send back just the html file?'
-				: 'Here are the latest wireframes including some notes on your previous work. Could you make a new website based on these wireframes and notes and send back just the html file?',
-		},
-		{
-			// send the text of all selected shapes, so that GPT can use it as a reference (if anything is hard to see)
-			type: 'text',
-			text:
-				referenceText !== ''
-					? referenceText
-					: 'Oh, it looks like there was not any text in this design!',
-		},
-	]
-
-	if (previousResponseContent) {
-		userMessages.push({
-			type: 'text',
-			text: previousResponseContent,
-		})
+	if (referenceText === '') {
+		return 'Generate html based on the wireframes.'
 	}
-
-	// combine the user prompt with the system prompt
-	return [
-		{ role: 'system', content: systemPrompt },
-		{ role: 'user', content: userMessages },
-	]
+	else {
+		return 'Generate html based on the wireframes and the following notes: ' + referenceText
+	}
 }
 
 function populateResponseShape(
 	editor: Editor,
 	responseShapeId: TLShapeId,
-	openAiResponse: GPT4VCompletionResponse
+	ollamaResponse: OllamaCOmpletionResponse
 ) {
-	if (openAiResponse.error) {
-		throw new Error(openAiResponse.error.message)
-	}
-
 	// extract the html from the response
-	const message = openAiResponse.choices[0].message.content
+	const message = ollamaResponse.response
 	const start = message.indexOf('<!DOCTYPE html>')
 	const end = message.indexOf('</html>')
+	if (start == -1 || end == -1) {
+		throw new Error('Could not find html in response')
+	}
 	const html = message.slice(start, end + '</html>'.length)
 
 	// update the response shape we created earlier with the content
